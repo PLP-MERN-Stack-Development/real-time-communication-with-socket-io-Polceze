@@ -261,6 +261,15 @@ app.get('/', (req, res) => {
   res.send('Socket.io Chat Server is running');
 });
 
+if (process.env.NODE_ENV === 'production') {
+  app.use(express.static(path.join(__dirname, '../client/dist')));
+  
+  // Handle React routing, return all requests to React app
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, '../client/dist/index.html'));
+  });
+}
+
 // Start server
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
