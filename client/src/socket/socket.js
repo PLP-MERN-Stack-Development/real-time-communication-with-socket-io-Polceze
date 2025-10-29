@@ -1,5 +1,3 @@
-// socket.js - Socket.io client setup
-
 import { io } from 'socket.io-client';
 import { useEffect, useState } from 'react';
 
@@ -21,12 +19,16 @@ export const useSocket = () => {
   const [messages, setMessages] = useState([]);
   const [users, setUsers] = useState([]);
   const [typingUsers, setTypingUsers] = useState([]);
+  const [currentRoom, setCurrentRoom] = useState('general');
+  const [rooms, setRooms] = useState(['general']);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notifications, setNotifications] = useState([]);
 
   // Connect to socket server
   const connect = (username) => {
     socket.connect();
     if (username) {
-      socket.emit('user_join', username);
+      socket.emit('user_join', { username, room: currentRoom });
     }
   };
 
@@ -37,7 +39,10 @@ export const useSocket = () => {
 
   // Send a message
   const sendMessage = (message) => {
-    socket.emit('send_message', { message });
+    socket.emit('send_message', { 
+      message, 
+      room: currentRoom 
+    });
   };
 
   // Send a private message
@@ -45,9 +50,21 @@ export const useSocket = () => {
     socket.emit('private_message', { to, message });
   };
 
+  // Join a room
+  const joinRoom = (room) => {
+    socket.emit('join_room', room);
+    setCurrentRoom(room);
+    setUnreadCount(0);
+  };
+
   // Set typing status
   const setTyping = (isTyping) => {
-    socket.emit('typing', isTyping);
+    socket.emit('typing', { isTyping, room: currentRoom });
+  };
+
+  // Add reaction to message
+  const addReaction = (messageId, reaction) => {
+    socket.emit('message_reaction', { messageId, reaction });
   };
 
   // Socket event listeners
@@ -55,21 +72,33 @@ export const useSocket = () => {
     // Connection events
     const onConnect = () => {
       setIsConnected(true);
+      console.log('Connected to server');
     };
 
     const onDisconnect = () => {
       setIsConnected(false);
+      console.log('Disconnected from server');
     };
 
     // Message events
     const onReceiveMessage = (message) => {
       setLastMessage(message);
       setMessages((prev) => [...prev, message]);
+      
+      // Increase unread count if not in current room
+      if (message.room !== currentRoom) {
+        setUnreadCount(prev => prev + 1);
+      }
     };
 
     const onPrivateMessage = (message) => {
       setLastMessage(message);
       setMessages((prev) => [...prev, message]);
+      
+      // Add notification for private message
+      if (message.sender !== users.find(u => u.id === socket.id)?.username) {
+        addNotification(`Private message from ${message.sender}`);
+      }
     };
 
     // User events
@@ -77,35 +106,55 @@ export const useSocket = () => {
       setUsers(userList);
     };
 
-    const onUserJoined = (user) => {
-      // You could add a system message here
+    const onUserJoined = (data) => {
       setMessages((prev) => [
         ...prev,
         {
           id: Date.now(),
           system: true,
-          message: `${user.username} joined the chat`,
+          message: `${data.username} joined the chat`,
           timestamp: new Date().toISOString(),
         },
       ]);
+      addNotification(`${data.username} joined the chat`);
     };
 
-    const onUserLeft = (user) => {
-      // You could add a system message here
+    const onUserLeft = (data) => {
       setMessages((prev) => [
         ...prev,
         {
           id: Date.now(),
           system: true,
-          message: `${user.username} left the chat`,
+          message: `${data.username} left the chat`,
           timestamp: new Date().toISOString(),
         },
       ]);
+      addNotification(`${data.username} left the chat`);
     };
 
     // Typing events
     const onTypingUsers = (users) => {
       setTypingUsers(users);
+    };
+
+    // Room events
+    const onRoomList = (roomList) => {
+      setRooms(roomList);
+    };
+
+    const onRoomJoined = (room) => {
+      setCurrentRoom(room);
+      setMessages([]);
+      setUnreadCount(0);
+    };
+
+    // Reaction events
+    const onMessageReaction = (reactionData) => {
+      setMessages(prev => prev.map(msg => 
+        msg.id === reactionData.messageId 
+          ? { ...msg, reactions: { ...msg.reactions, [reactionData.reaction]: (msg.reactions?.[reactionData.reaction] || 0) + 1 } }
+          : msg
+      ));
     };
 
     // Register event listeners
@@ -117,6 +166,9 @@ export const useSocket = () => {
     socket.on('user_joined', onUserJoined);
     socket.on('user_left', onUserLeft);
     socket.on('typing_users', onTypingUsers);
+    socket.on('room_list', onRoomList);
+    socket.on('room_joined', onRoomJoined);
+    socket.on('message_reaction', onMessageReaction);
 
     // Clean up event listeners
     return () => {
@@ -128,8 +180,48 @@ export const useSocket = () => {
       socket.off('user_joined', onUserJoined);
       socket.off('user_left', onUserLeft);
       socket.off('typing_users', onTypingUsers);
+      socket.off('room_list', onRoomList);
+      socket.off('room_joined', onRoomJoined);
+      socket.off('message_reaction', onMessageReaction);
     };
-  }, []);
+  }, [currentRoom, users]);
+
+  // Add notification
+  const addNotification = (message) => {
+    const notification = {
+      id: Date.now(),
+      message,
+      timestamp: new Date().toISOString(),
+      read: false
+    };
+    setNotifications(prev => [...prev, notification]);
+    
+    // Play sound notification
+    playNotificationSound();
+    
+    // Browser notification
+    if (Notification.permission === 'granted') {
+      new Notification('Chat App', { body: message });
+    }
+  };
+
+  // Play notification sound
+  const playNotificationSound = () => {
+    const audio = new Audio('/notification.mp3');
+    audio.play().catch(() => {}); // Ignore errors if audio can't play
+  };
+
+  // Request notification permission
+  const requestNotificationPermission = () => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  };
+
+  // Mark notifications as read
+  const markNotificationsAsRead = () => {
+    setNotifications(prev => prev.map(notif => ({ ...notif, read: true })));
+  };
 
   return {
     socket,
@@ -138,12 +230,20 @@ export const useSocket = () => {
     messages,
     users,
     typingUsers,
+    currentRoom,
+    rooms,
+    unreadCount,
+    notifications,
     connect,
     disconnect,
     sendMessage,
     sendPrivateMessage,
+    joinRoom,
     setTyping,
+    addReaction,
+    requestNotificationPermission,
+    markNotificationsAsRead,
   };
 };
 
-export default socket; 
+export default socket;
