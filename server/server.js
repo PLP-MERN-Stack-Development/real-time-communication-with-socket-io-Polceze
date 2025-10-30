@@ -13,16 +13,58 @@ dotenv.config();
 // Initialize Express app
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, {
-  cors: {
-    origin: process.env.CLIENT_URL || 'http://localhost:5173',
-    methods: ['GET', 'POST'],
-    credentials: true,
+
+// Configure CORS properly - FIXED VERSION
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or Postman)
+    if (!origin) return callback(null, true);
+    
+    // List of allowed origins
+    const allowedOrigins = [
+      'https://chit-chit-chat.netlify.app',
+      'http://localhost:5173',
+      'http://localhost:3000'
+    ];
+    
+    // Check if origin is exactly in the list
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    
+    // Check if origin matches when we normalize trailing slashes
+    const normalizeUrl = (url) => {
+      return url.endsWith('/') ? url.slice(0, -1) : url;
+    };
+    
+    const normalizedOrigin = normalizeUrl(origin);
+    const normalizedAllowed = allowedOrigins.map(normalizeUrl);
+    
+    if (normalizedAllowed.includes(normalizedOrigin)) {
+      return callback(null, true);
+    }
+    
+    // Origin not allowed
+    console.log(`CORS blocked: ${origin}. Allowed: ${allowedOrigins.join(', ')}`);
+    callback(new Error(`CORS policy: Origin ${origin} is not allowed`));
   },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+};
+
+// Apply CORS middleware
+app.use(cors(corsOptions));
+
+// Socket.io configuration with fixed CORS
+const io = new Server(server, {
+  cors: corsOptions,
+  transports: ['websocket', 'polling']
 });
 
-// Middleware
-app.use(cors());
+// Handle preflight requests
+app.options('*', cors(corsOptions));
+
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -274,6 +316,7 @@ if (process.env.NODE_ENV === 'production') {
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  console.log(`CORS enabled for: https://chit-chit-chat.netlify.app`);
 });
 
 module.exports = { app, server, io };
